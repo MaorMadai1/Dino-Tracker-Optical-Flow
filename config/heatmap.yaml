@@ -1,0 +1,25 @@
+# Path to the DINO model
+dino_model: "dinov2_vitb14"
+
+# Stride for the VitExtractor
+stride: 7
+
+# Path to the folder containing frames of the video
+FRAMES_PATH: /home/dor.danino/dino-tracker/dataset/tapvid-davis/davis_480/10/video
+
+# Start and end frame indices for processing
+start_frame_idx: 0
+end_frame_idx: 80
+
+# Output folder to save results
+output_path: output_folder/davis_480/1/dinov2_large_grid
+
+# Point of interest to visualize the heatmap
+# Example for a specific point: [x, y, t] (coordinates x, y, and frame index t)
+# Use 'grid' to process grid points
+point: [300, 170, 0]
+#point: "benchmark_grid"                         # Use 'grid' mode / 'benchmark_grid - for benchmarking'
+
+
+# Optional segmentation mask path (set to null if not used)
+seg_mask_path: /home/dor.danino/dino-tracker/dataset/tapvid-davis/davis_480/1/masks/00000.png

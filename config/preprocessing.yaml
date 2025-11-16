@@ -1,0 +1,34 @@
+# --- OF trajectories config ---
+video_resh: 476
+video_resw: 854
+min_trajectory_length: 2
+threshold: 1.5
+filter_using_direct_flow: true
+direct_flow_threshold: 2.5
+
+# --- DINO embeddings for training & dino-bb ---
+#large model:
+#dino_model_name: dinov2_vitl14
+#giant model:
+# dino_model_name: dinov2_vitg14  # Change model to Giant
+# dino_layer: 38 # Use layer 39 for vitg14
+#small model:
+dino_model_name: dinov2_vits14
+dino_layer: 11
+dino_facet: tokens
+dino_stride: 7
+
+# --- DINO embeddings for FG mask ---
+#mask_dino_model_name: dinov2_vitl14
+# i chagne here the model to small , for good compare to dino featup 
+#dino_model_name: dinov2_vitl14
+mask_dino_facet: tokens
+mask_dino_layer: 23
+mask_dino_stride: 
+
+# --- FG mask ---
+fg_mask_threshold: 0.6
+
+# --- DINO Best-Buddies ---
+dino_bb_box_size: 30 # for NMS
+dino_bb_iou_threshold: 0.2 # for NMS
