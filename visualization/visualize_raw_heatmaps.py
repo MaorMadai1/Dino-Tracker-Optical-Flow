@@ -146,18 +146,24 @@ def visualize_heatmaps_for_point(point, start_frame_idx, end_frame_idx, frames_p
 
     point_frame_idx = int(point[2])
     point_frame = frames[point_frame_idx].cuda()
+
+    # create an img with the query point on it, and write the frame num:
     point_img = overlay_point(T.ToPILImage()(point_frame.cpu()), point[0].cpu(), point[1].cpu())
     point_img = write_frame_number_on_image(point_img, point_frame_idx)
 
+    # takes the frame features from frame(t=point[2]):
     #point_frame_features = get_frame_features(point_frame[None, ...], vit_extractor).detach().clone()
     point_frame_features = video_features[point_frame_idx]
     point_frame_features = point_frame_features.to(device) #this dor add 
     #print(point_frame_features.shape)
 
+    # samples shape: 1 x 1 x 1 x 2
     samples = point[:2][None, None, None, ...].detach().clone().float()
+    #normalize between -1 and 1:
     samples[:, :, :, 0] = samples[:, :, :, 0] / (w - 1)
     samples[:, :, :, 1] = samples[:, :, :, 1] / (h - 1)
     samples[:, :, :, :] = samples[:, :, :, :] * 2 - 1
+    #return the corresponding features vector for the normalized point, also does interpolation if needed.
     point_feature = torch.nn.functional.grid_sample(point_frame_features[None, ...], samples, align_corners=True)[:, :, 0, 0]
 
 
@@ -165,7 +171,7 @@ def visualize_heatmaps_for_point(point, start_frame_idx, end_frame_idx, frames_p
         frame = frames[t].cuda()
         frame_features = get_frame_features(frame[None, ...], vit_extractor) if video_features is None else video_features[t]
         c, h_f, w_f = frame_features.shape
-        frame_features = frame_features.reshape(c, h_f * w_f).permute(1, 0)
+        frame_features = frame_features.reshape(c, h_f * w_f).permute(1, 0) #each row is a feature vector for a pixel in the frame
         heatmap_img, heatmap = compute_correspondence_heatmap(point_feature, frame_features, h_f, w_f, normalize_corr=normalize_corr, normalize_spatially=normalize_spatially)
         
         nearest_coord = unravel_index(heatmap.argmax(), heatmap.shape)  # h_f, w_f (y,x)
