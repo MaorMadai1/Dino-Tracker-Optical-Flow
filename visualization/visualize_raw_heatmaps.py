@@ -1,6 +1,7 @@
 # set working directory
 import argparse
 import os
+from tkinter import W
 import cv2
 import torch
 from torch.nn import CosineSimilarity
@@ -8,6 +9,7 @@ import yaml
 from models.extractor import VitExtractor
 from models.networks.tracker_head import TrackerHead
 from data.dataset import LongRangeSampler
+from optical_flow_opt.optical_flow_methods import predict_point_with_optical_flow, convert_bbox_to_feature_space, compute_correspondence_heatmap_with_search_region
 import torchvision.transforms as T
 from PIL import Image, ImageDraw
 import matplotlib.cm as cm
@@ -134,6 +136,17 @@ def eff_compute_correspondence_heatmap(source_features, target_features, n_patch
 
     return colormap, heatmap
 
+def extract_point_feature(point, frame_features, h, w):
+    # samples shape: 1 x 1 x 1 x 2
+    samples = point[:2][None, None, None, ...].detach().clone().float()
+    #normalize between -1 and 1:
+    samples[:, :, :, 0] = samples[:, :, :, 0] / (w - 1)
+    samples[:, :, :, 1] = samples[:, :, :, 1] / (h - 1)
+    samples[:, :, :, :] = samples[:, :, :, :] * 2 - 1
+    #return the corresponding features vector for the normalized point, also does interpolation if needed.
+    point_feature = torch.nn.functional.grid_sample(frame_features[None, ...], samples, align_corners=True)[:, :, 0, 0]
+    return point_feature
+
 def visualize_heatmaps_for_point(point, start_frame_idx, end_frame_idx, frames_path, vit_extractor = None, video_features=None, normalize_corr=True, normalize_spatially=True, occlusion_threshold=0.3):
     frames = load_video(frames_path)["video"]
     _t, c, h, w = frames.shape
@@ -154,40 +167,47 @@ def visualize_heatmaps_for_point(point, start_frame_idx, end_frame_idx, frames_p
     # takes the frame features from frame(t=point[2]):
     #point_frame_features = get_frame_features(point_frame[None, ...], vit_extractor).detach().clone()
     point_frame_features = video_features[point_frame_idx]
+    _, h_f, w_f = point_frame_features.shape
     point_frame_features = point_frame_features.to(device) #this dor add 
     #print(point_frame_features.shape)
 
-    # samples shape: 1 x 1 x 1 x 2
-    samples = point[:2][None, None, None, ...].detach().clone().float()
-    #normalize between -1 and 1:
-    samples[:, :, :, 0] = samples[:, :, :, 0] / (w - 1)
-    samples[:, :, :, 1] = samples[:, :, :, 1] / (h - 1)
-    samples[:, :, :, :] = samples[:, :, :, :] * 2 - 1
-    #return the corresponding features vector for the normalized point, also does interpolation if needed.
-    point_feature = torch.nn.functional.grid_sample(point_frame_features[None, ...], samples, align_corners=True)[:, :, 0, 0]
-
+    point_feature = extract_point_feature(point, point_frame_features, h, w)
+    
+    nearest_coord = (int(point[0]), int(point[1]))
+    nearest_coord_feature = point_feature
 
     for t in range(start_frame_idx, end_frame_idx+1):
         frame = frames[t].cuda()
-        frame_features = get_frame_features(frame[None, ...], vit_extractor) if video_features is None else video_features[t]
-        c, h_f, w_f = frame_features.shape
-        frame_features = frame_features.reshape(c, h_f * w_f).permute(1, 0) #each row is a feature vector for a pixel in the frame
-        heatmap_img, heatmap = compute_correspondence_heatmap(point_feature, frame_features, h_f, w_f, normalize_corr=normalize_corr, normalize_spatially=normalize_spatially)
-        
-        nearest_coord = unravel_index(heatmap.argmax(), heatmap.shape)  # h_f, w_f (y,x)
-        # Get the heatmap value at the nearest_coord
+        of_success = False # we reset the optical flow sucees flag to false first.
+        if args.optical_flow_opt and t > start_frame_idx and nearest_coord is not None:
+            prev_frame = frames[t-1].cuda()
+            of_prediction, bbox_pixels, of_success = predict_point_with_optical_flow(
+                point=nearest_coord,
+                prev_frame=prev_frame,
+                next_frame=frame,
+                search_radius=50
+            )
+            if of_success:
+                bbox_features = convert_bbox_to_feature_space(
+                    bbox_pixels, (h, w), (h_f, w_f)
+                )
+                heatmap_img, heatmap, nearest_coord = compute_correspondence_heatmap_with_search_region(
+                    point_feature, video_features[t], bbox_features, h_f, w_f, normalize_corr=normalize_corr, normalize_spatially=normalize_spatially)
+            print(f"of_success: {of_success} for t={t}")
+        if not of_success: # optical flow failed, use full frame search
+            print(f"of_success: {of_success} for t={t}")
+            frame_features = get_frame_features(frame[None, ...], vit_extractor) if video_features is None else video_features[t]
+            c, h_f, w_f = frame_features.shape
+            frame_features = frame_features.reshape(c, h_f * w_f).permute(1, 0) #each row is a feature vector for a pixel in the frame
+            heatmap_img, heatmap = compute_correspondence_heatmap(point_feature, frame_features, h_f, w_f, normalize_corr=normalize_corr, normalize_spatially=normalize_spatially)
+            nearest_coord = unravel_index(heatmap.argmax(), heatmap.shape)  # h_f, w_f (y,x)
+
+        # Get the heatmap value at the nearest_coord -saved for later, before normalization
         heatmap_value = heatmap[nearest_coord]
-        # If the heatmap value is below the occlusion threshold, set as occlusion
-        if heatmap_value < occlusion_threshold:
-            occlusion.append(True)  # Mark this point as occluded
-            nearest_coord = None  # Mark the coordinate as None (or use a placeholder value for occlusion)
-        else:
-            occlusion.append(False)  # Not occluded
 
         # Scale coordinates from feature map size to full image size
         nearest_coord = (int(nearest_coord[0] * h / h_f),int(nearest_coord[1] * w / w_f),)
         trajectory.append(nearest_coord)
-
         trajectory_img = overlay_point(frame, nearest_coord[1], nearest_coord[0])
         heatmap_img = overlay_heatmap_jpg(T.ToPILImage()(frame.cpu()), heatmap_img)
         heatmap_img = write_frame_number_on_image(heatmap_img, t)
@@ -202,6 +222,15 @@ def visualize_heatmaps_for_point(point, start_frame_idx, end_frame_idx, frames_p
         else:
             # trajectory_imgs.append(T.ToPILImage()(frame.cpu()))
             trajectory_imgs.append(trajectory_img)
+        
+
+        # If the heatmap value is below the occlusion threshold, set as occlusion
+        if heatmap_value < occlusion_threshold:
+            print(f"occlusion: True for t={t}")
+            occlusion.append(True)  # Mark this point as occluded
+            nearest_coord = None  # Mark the coordinate as None (or use a placeholder value for occlusion)
+        else:
+            occlusion.append(False)  # Not occluded
         
         #trajectory = np.array(trajectory)  # Shape will be (num_frames, 2)
     
@@ -532,6 +561,7 @@ if __name__ == "__main__":
     #parser.add_argument("--point", type=str, default="benchmark_grid")
     parser.add_argument("--point", type=str, default=[495, 150, 0])
     parser.add_argument("--save_video", type=int, default=0)
+    parser.add_argument("--optical_flow_opt", type=bool, default=False)
     
     args = parser.parse_args()
 
