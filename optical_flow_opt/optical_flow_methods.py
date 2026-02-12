@@ -4,6 +4,7 @@ import torch
 from torch.nn import CosineSimilarity
 import matplotlib.cm as cm
 from PIL import Image
+import time
 
 
 def predict_point_with_optical_flow(point, prev_frame, next_frame, search_radius=20, return_error=False):
@@ -201,7 +202,7 @@ def compute_correspondence_heatmap_with_search_region(
     Returns:
         colormap: (n_patch_h, n_patch_w, 4) - full-size colormap with zeros outside search region
         heatmap: (n_patch_h, n_patch_w) - full-size heatmap with zeros outside search region
-        best_match: (x, y) - best match coordinates in full feature space
+        best_match: (y, x) - best match coordinates in full feature space (matches unravel_index convention)
     """
     device = target_features.device
     source_feature = source_feature.to(device)
@@ -210,11 +211,14 @@ def compute_correspondence_heatmap_with_search_region(
     local_features, bbox_info = extract_local_features(target_features, bbox_features)
     
     # Compute similarity only within local region
+    time_start = time.time()
     if normalize_corr:
         local_heatmap = CosineSimilarity(dim=1)(source_feature, local_features)
     else:
         local_heatmap = torch.mm(source_feature, local_features.t()).squeeze(0)
     
+    time_end = time.time()
+
     # Normalize spatially if requested
     if normalize_spatially:
         local_heatmap = (local_heatmap - local_heatmap.min()) / (local_heatmap.max() - local_heatmap.min() + 1e-6)
@@ -242,7 +246,8 @@ def compute_correspondence_heatmap_with_search_region(
     heatmap_cpu = full_heatmap.detach().cpu().numpy()
     colormap = (cmap(heatmap_cpu) * 255).astype('uint8')
     
-    return colormap, full_heatmap, (best_x_global.item(), best_y_global.item())
+    # Return (y, x) to match unravel_index convention
+    return colormap, full_heatmap, (best_y_global.item(), best_x_global.item()), time_end - time_start
 
 
 def smart_search_radius(
@@ -306,6 +311,191 @@ def smart_search_radius(
     radius = int(np.clip(radius, min_radius, max_radius))
     
     return radius, confidence
+
+
+# ============================================================================
+# PURE OPTICAL FLOW TRACKING (NO DINO)
+# ============================================================================
+
+def track_point_optical_flow_only(
+    point,
+    frames_path,
+    start_frame_idx=0,
+    end_frame_idx=None,
+    return_status=False
+):
+    """
+    Track a point through a TapVid video using ONLY optical flow (no DINO features).
+    Tracks forward only from the query frame.
+    
+    Args:
+        point: (x, y, frame_idx) or (x, y) - query point. If (x, y), starts from start_frame_idx
+        frames_path: str - path to folder containing video frames (00000.jpg, 00001.jpg, etc.)
+        start_frame_idx: int - starting frame index (default 0, overridden if point has frame_idx)
+        end_frame_idx: int - ending frame index (default: auto-detect from folder)
+        return_status: bool - if True, also return tracking status per frame
+    
+    Returns:
+        trajectory: list of (x, y) tuples - tracked positions for each frame (from query frame to end)
+        (optional) statuses: list of bool - True if tracking succeeded for each frame
+    """
+    import os
+    import glob
+    
+    # Parse point
+    if len(point) == 3:
+        x, y, query_frame = point[0], point[1], int(point[2])
+        start_frame_idx = query_frame
+    else:
+        x, y = point[0], point[1]
+        query_frame = start_frame_idx
+    
+    # Get list of frame files
+    frame_files = sorted(glob.glob(os.path.join(frames_path, "*.jpg")))
+    if not frame_files:
+        frame_files = sorted(glob.glob(os.path.join(frames_path, "*.png")))
+    
+    if not frame_files:
+        raise ValueError(f"No frames found in {frames_path}")
+    
+    # Auto-detect end frame if not specified
+    if end_frame_idx is None:
+        end_frame_idx = len(frame_files) - 1
+    
+    # Initialize
+    trajectory = []
+    statuses = []
+    pos = (float(x), float(y))
+    
+    # Track forward from query frame
+    for t in range(query_frame, end_frame_idx + 1):
+        if t == query_frame:
+            trajectory.append(pos)
+            statuses.append(True)
+            continue
+        
+        # Load frames
+        prev_frame = cv2.imread(frame_files[t - 1])
+        curr_frame = cv2.imread(frame_files[t])
+        
+        if prev_frame is None or curr_frame is None:
+            print(f"Warning: Could not load frame {t-1} or {t}")
+            trajectory.append(pos)  # Keep last known position
+            statuses.append(False)
+            continue
+        
+        # Convert BGR to RGB
+        prev_frame = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2RGB)
+        curr_frame = cv2.cvtColor(curr_frame, cv2.COLOR_BGR2RGB)
+        
+        # Predict with optical flow
+        predicted, bbox, success = predict_point_with_optical_flow(
+            point=pos,
+            prev_frame=prev_frame,
+            next_frame=curr_frame,
+            search_radius=30
+        )
+        
+        if success:
+            pos = predicted
+        # else: keep pos unchanged (last known position)
+        
+        trajectory.append(pos)
+        statuses.append(success)
+    
+    if return_status:
+        return trajectory, statuses
+    return trajectory
+
+
+def visualize_optical_flow_tracking(
+    point,
+    frames_path,
+    output_path=None,
+    start_frame_idx=0,
+    end_frame_idx=None,
+    point_radius=6,
+    point_color="red",
+    fps=10
+):
+    """
+    Track and visualize a point through a video using optical flow only.
+    Uses overlay_point from tracking_utils for consistent visualization.
+    
+    Args:
+        point: (x, y, frame_idx) or (x, y) - query point
+        frames_path: str - path to folder containing video frames
+        output_path: str - path to save output video (if None, just returns images)
+        start_frame_idx: int - starting frame
+        end_frame_idx: int - ending frame (None = auto-detect)
+        point_radius: int - radius of point circle
+        point_color: str - color for point (e.g., "red", "green", "blue")
+        fps: int - frames per second for output video
+    
+    Returns:
+        trajectory: list of (x, y) positions
+        trajectory_imgs: list of PIL Images with overlaid points
+    """
+    import os
+    import glob
+    from PIL import Image as PILImage
+    from tracking_utils import overlay_point
+    
+    # Get trajectory
+    trajectory, statuses = track_point_optical_flow_only(
+        point=point,
+        frames_path=frames_path,
+        start_frame_idx=start_frame_idx,
+        end_frame_idx=end_frame_idx,
+        return_status=True
+    )
+    
+    # Get frame files
+    frame_files = sorted(glob.glob(os.path.join(frames_path, "*.jpg")))
+    if not frame_files:
+        frame_files = sorted(glob.glob(os.path.join(frames_path, "*.png")))
+    
+    if end_frame_idx is None:
+        end_frame_idx = len(frame_files) - 1
+    
+    # Parse query frame
+    if len(point) == 3:
+        query_frame = int(point[2])
+    else:
+        query_frame = start_frame_idx
+    
+    # Create trajectory images
+    trajectory_imgs = []
+    
+    for i, t in enumerate(range(query_frame, end_frame_idx + 1)):
+        # Load frame as PIL Image
+        frame_pil = PILImage.open(frame_files[t]).convert('RGB')
+        
+        pos = trajectory[i]
+        x, y = int(pos[0]), int(pos[1])
+        
+        # Use overlay_point from tracking_utils
+        color = point_color if statuses[i] else "red"
+        trajectory_img = overlay_point(frame_pil, x, y, r=point_radius, c=color)
+        
+        trajectory_imgs.append(trajectory_img)
+    
+    # Save video if output path specified
+    if output_path is not None:
+        # Convert PIL images to numpy for video writing
+        first_img = np.array(trajectory_imgs[0])
+        h, w = first_img.shape[:2]
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        writer = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
+        
+        for img in trajectory_imgs:
+            # Convert RGB to BGR for OpenCV
+            frame_bgr = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+            writer.write(frame_bgr)
+        writer.release()
+        print(f"Saved tracking video to: {output_path}")
+    
+    return trajectory, trajectory_imgs
 
 
 # ============================================================================

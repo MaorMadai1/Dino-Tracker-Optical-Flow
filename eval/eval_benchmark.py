@@ -1,6 +1,7 @@
 import argparse
 from tqdm import tqdm
 import pandas as pd
+import numpy as np
 import os
 import pickle
 from eval.metrics import compute_tapvid_metrics_for_video, compute_badja_metrics_for_video
@@ -26,8 +27,9 @@ def eval_dataset(args):
         if video_idx_str.startswith("."):
             continue
         video_dir = os.path.join(dataset_root, video_idx_str)
-        trajectories_dir = os.path.join(video_dir, "dinov2_Fit3D_argmax_grid_trajectory")
-        occlusions_dir = os.path.join(video_dir, "dinov2_Fit3D_argmax_grid_occlusion")
+        trajectories_dir = os.path.join(video_dir, "dinov2_grid_trajectory")
+        occlusions_dir = os.path.join(video_dir, "dinov2_grid_occlusion")
+        time_taken_dir = os.path.join(video_dir, "dinov2_grid_time_taken")
         video_idx = int(video_idx_str)
 
         # Get the video size for the current video index
@@ -38,7 +40,8 @@ def eval_dataset(args):
                                                         model_occ_pred_dir=occlusions_dir,
                                                         video_idx=video_idx,
                                                         benchmark_data=benchmark_data,
-                                                        pred_video_sizes=[854, 476]) # set to None to get the video size from the benchmark data
+                                                        pred_video_sizes=[854, 476],
+                                                        optical_flow_opt=args.optical_flow_opt) # set to None to get the video size from the benchmark data
         elif args.dataset_type == "BADJA":
             metrics = compute_badja_metrics_for_video(model_trajectories_dir=trajectories_dir, 
                                                       video_idx=video_idx,
@@ -46,11 +49,23 @@ def eval_dataset(args):
                                                       pred_video_sizes=[854, 480])
         else:
             raise ValueError("Invalid dataset type. Must be either tapvid or BADJA")
+        
+        # Load time taken data and compute average
+        of_flag = 1 if args.optical_flow_opt else 0
+        time_taken_file = os.path.join(time_taken_dir, f"time_taken_0_of{of_flag}.npy")
+        if os.path.exists(time_taken_file):
+            time_taken_data = np.load(time_taken_file)
+            metrics["avg_time_per_point"] = float(np.mean(time_taken_data))
+        else:
+            metrics["avg_time_per_point"] = None
+        
         metrics["video_idx"] = int(video_idx)
         metrics_list.append(metrics)
 
     metrics_df = pd.DataFrame(metrics_list)
+    metrics_df['video_idx'] = metrics_df['video_idx'].astype(int)
     metrics_df.set_index('video_idx', inplace=True)
+    metrics_df.sort_index(inplace=True)
     metrics_df.loc['average', :] = metrics_df.mean()
     metrics_df.to_csv(args.out_file)
     print("Total metrics:") 
@@ -60,7 +75,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-root-dir", default="output_folder/davis_480", type=str)
     parser.add_argument("--benchmark-pickle-path", default="tapvid/tapvid_davis_data_strided.pkl", type=str)
-    parser.add_argument("--out-file", default="output_folder/dinov2_Fit3D_argmax_comp_metrics.csv", type=str)
+    parser.add_argument("--out-file", default="output_folder/dinov2_metrics.csv", type=str)
     parser.add_argument("--dataset-type", default="tapvid", type=str, help="Dataset type: tapvid or BADJA")
+    parser.add_argument("--optical-flow-opt", action="store_true", help="Whether optical flow optimization was used")
     args = parser.parse_args()
     eval_dataset(args)
