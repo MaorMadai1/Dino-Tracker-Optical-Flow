@@ -7,14 +7,18 @@ filter_using_direct_flow: true
 direct_flow_threshold: 2.5
 
 # --- DINO embeddings for training & dino-bb ---
-#large model:
-#dino_model_name: dinov2_vitl14
-#giant model:
+#large model - assaf used
+# dino_model_name: dinov2_vitl14
+# dino_layer: 15
+
+#giant model - dor used 
 # dino_model_name: dinov2_vitg14  # Change model to Giant
 # dino_layer: 38 # Use layer 39 for vitg14
-#small model:
-dino_model_name: dinov2_vits14
+
+#small model - maor used
+dino_model_name: dinov2_vits14 #dinov2_vits14 dinov3_vits16
 dino_layer: 11
+
 dino_facet: tokens
 dino_stride: 7
 
