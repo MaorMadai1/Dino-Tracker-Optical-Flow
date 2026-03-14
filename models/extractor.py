@@ -26,6 +26,10 @@ class VitExtractor(nn.Module):
             self.model = torch.hub.load('facebookresearch/dinov2', model_name).to(device)
             #self.model = DINOv2Model.from_pretrained('path_to_model_directory')
             #self.model = torch.hub.load('facebookresearch/dinov2', 'dinov2_base', model_name='dinov2_base').to(device)
+        elif "v3" in model_name:
+            repo_dir = "./dinov3"
+            path_dir = "./dinov3/dinov3_vits16_pretrain_lvd1689m-08c60483.pth"
+            self.model = torch.hub.load(repo_dir, 'dinov3_vits16', source='local', weights=path_dir)
         else:
             self.model = torch.hub.load('facebookresearch/dino:main', model_name).to(device)
         self.model_name = model_name

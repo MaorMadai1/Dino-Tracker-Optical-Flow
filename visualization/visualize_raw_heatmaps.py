@@ -150,7 +150,7 @@ def extract_point_feature(point, frame_features, h, w):
     point_feature = torch.nn.functional.grid_sample(frame_features[None, ...], samples, align_corners=True)[:, :, 0, 0]
     return point_feature
 
-def visualize_heatmaps_for_point(point, start_frame_idx, end_frame_idx, frames_path, vit_extractor = None, video_features=None, normalize_corr=True, normalize_spatially=True, occlusion_threshold=0.3):
+def visualize_heatmaps_for_point(point, start_frame_idx, end_frame_idx, frames_path, vit_extractor = None, video_features=None, normalize_corr=True, normalize_spatially=True, occlusion_threshold=0.3, dynamic_bbox=False):
     frames = load_video(frames_path)["video"]
     _t, c, h, w = frames.shape
 
@@ -172,25 +172,20 @@ def visualize_heatmaps_for_point(point, start_frame_idx, end_frame_idx, frames_p
     point_frame_features = video_features[point_frame_idx]
     _, h_f, w_f = point_frame_features.shape
     point_frame_features = point_frame_features.to(device) #this dor add 
-    #print(point_frame_features.shape)
-
     point_feature = extract_point_feature(point, point_frame_features, h, w)
-    
-    print(f"point in visualize: {point}")
-
     last_point = (point[0], point[1])
-    print(f"last_point: {last_point}")
 
     for t in range(start_frame_idx, end_frame_idx+1):
         frame = frames[t].cuda()
         of_success = False # we reset the optical flow sucees flag to false first.
-        if args.optical_flow_opt and t > start_frame_idx and last_point is not None:
+        if args.optical_flow_opt and t > start_frame_idx:
             prev_frame = frames[t-1].cuda()
             _, bbox_pixels, of_success = predict_point_with_optical_flow(
                 point=last_point,
                 prev_frame=prev_frame,
                 next_frame=frame,
-                search_radius=50
+                search_radius=50,
+                dynamic_bbox=dynamic_bbox
             )
 
             if of_success:
@@ -201,6 +196,7 @@ def visualize_heatmaps_for_point(point, start_frame_idx, end_frame_idx, frames_p
                     point_feature, video_features[t], bbox_features, h_f, w_f, normalize_corr=normalize_corr, normalize_spatially=normalize_spatially)
 
         if not of_success: # optical flow failed, use full frame search
+            print(f"optical flow failed at frame {t}, using full frame search")
             frame_features = get_frame_features(frame[None, ...], vit_extractor) if video_features is None else video_features[t]
             c, h_f, w_f = frame_features.shape
             frame_features = frame_features.reshape(c, h_f * w_f).permute(1, 0) #each row is a feature vector for a pixel in the frame
@@ -212,22 +208,18 @@ def visualize_heatmaps_for_point(point, start_frame_idx, end_frame_idx, frames_p
 
         # Scale coordinates from feature map size to full image size
         last_point = (int(nearest_coord[1] * h / h_f),int(nearest_coord[0] * w / w_f),)
-        print(f"last_point in visualize: {last_point}, nearest_coord - in opposite order: {nearest_coord[1]}, {nearest_coord[0]}")
         trajectory.append(last_point)
         trajectory_img = overlay_point(frame, last_point[0], last_point[1])
         heatmap_img = overlay_heatmap_jpg(T.ToPILImage()(frame.cpu()), heatmap_img)
         heatmap_img = write_frame_number_on_image(heatmap_img, t)
         heatmap_img = overlay_point(heatmap_img, x = last_point[0], y = last_point[1]) # this will add the max corespond point to the heatmap image 
-        
         if t == point_frame_idx:
             heatmap_img = overlay_point(heatmap_img, point[0].cpu(), point[1].cpu(), r=3, c="green")
         heatmaps.append(heatmap)
         heatmap_imgs.append(heatmap_img)
-        
         if t == point_frame_idx:
             trajectory_imgs.append(point_img)
         else:
-            # trajectory_imgs.append(T.ToPILImage()(frame.cpu()))
             trajectory_imgs.append(trajectory_img)
         
 
@@ -267,7 +259,12 @@ def heatmap_single_point(args):
     x, y, t = args.point
     point = torch.tensor([x, y, t]).cuda()
     print(f"point in heatmap_single_point: {point}")
-    heatmap_imgs, heatmaps, trajectory_imgs, point_features, point_img ,_,_,time_taken = visualize_heatmaps_for_point(point, args.start_frame_idx, args.end_frame_idx, args.FRAMES_PATH ,video_features = my_features, normalize_spatially=False)
+    heatmap_imgs, heatmaps, trajectory_imgs, point_features, point_img ,_,_,time_taken = visualize_heatmaps_for_point(
+        point, args.start_frame_idx, args.end_frame_idx, args.FRAMES_PATH,
+        video_features = my_features,
+        normalize_spatially=False,
+        dynamic_bbox=args.dynamic_bbox
+    )
     output_path = args.output_path
     os.makedirs(output_path, exist_ok=True)
     # i add trajectory_imgs
@@ -306,7 +303,12 @@ def heatmap_grid_points(args):
     query_points = get_grid_query_points((frames.shape[-2], frames.shape[-1]), segm_mask=segm_mask, device=frames.device , interval = 50)
 
     for query_point_idx, query_point in enumerate(query_points):
-        heatmap_imgs, heatmaps, trajectory_imgs, point_features, point_img ,_,_,_ = visualize_heatmaps_for_point(query_point, args.start_frame_idx, args.end_frame_idx, args.FRAMES_PATH, vit_extractor, video_features = my_features, normalize_spatially=True)
+        heatmap_imgs, heatmaps, trajectory_imgs, point_features, point_img ,_,_,_ = visualize_heatmaps_for_point(
+            query_point, args.start_frame_idx, args.end_frame_idx, args.FRAMES_PATH, vit_extractor,
+            video_features = my_features, 
+            normalize_spatially=True,
+            dynamic_bbox=args.dynamic_bbox
+            )
         frames_path = save_video_frames(heatmap_imgs, output_path)
         frames_to_video(frames_path, output_filename=f"heatmap_query_point_{query_point_idx}", fps=5)
         # frames_path = save_video_frames(trajectory_imgs, output_path)
@@ -616,7 +618,8 @@ def benchmark_grid_points(args):
                 end_frame_idx=args.end_frame_idx,
                 frames_path=args.FRAMES_PATH,
                 video_features=my_features,
-                normalize_spatially=True
+                normalize_spatially=True,
+                dynamic_bbox=args.dynamic_bbox
             )
             
             # Store trajectory, occlusion, and time taken in dictionaries
@@ -634,7 +637,12 @@ def benchmark_grid_points(args):
     all_occlusions = np.array([occlusion_dict[i] for i in range(len(occlusion_dict))])      # Shape: (num_points, num_frames)
     
     # Save trajectories
-    of_flag = 1 if args.optical_flow_opt else 0
+    if args.optical_flow_opt and args.dynamic_bbox:
+        of_flag = 11
+    elif args.optical_flow_opt:
+        of_flag = 1
+    else:
+        of_flag = 0
     trajectory_filename = os.path.join(args.trajectory_output_path, f"trajectories_0_of{of_flag}.npy")
     np.save(trajectory_filename, all_trajectories)
     print(f"Saved trajectories to {trajectory_filename}, shape: {all_trajectories.shape}")
@@ -663,10 +671,10 @@ if __name__ == "__main__":
     #parser.add_argument("--point", type=str, default="benchmark_grid")
     parser.add_argument("--point", type=lambda s: s if s in ['grid', 'benchmark_grid'] else [int(v) for v in s.split(',')], 
                         default=[495, 150, 0]) # 290,313,0 for the car video, 495,150,0 for the first video
-    parser.add_argument("--save_video", type=int, default=0)
+    parser.add_argument("--save_video", action="store_true", help="Save video")
     parser.add_argument("--optical_flow_opt", action="store_true", help="Use optical flow optimization")
     parser.add_argument("--video_id", type=int, default=0) # -1 for all videos, 0 for the first video, 1 for the second video, etc.
-    
+    parser.add_argument("--dynamic_bbox", action="store_true", help="Use dynamic bbox")
     args = parser.parse_args()
 
     # Iterate over all folders in the dataset root

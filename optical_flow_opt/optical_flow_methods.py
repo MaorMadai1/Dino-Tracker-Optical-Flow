@@ -7,7 +7,7 @@ from PIL import Image
 import time
 
 
-def predict_point_with_optical_flow(point, prev_frame, next_frame, search_radius=20, return_error=False):
+def predict_point_with_optical_flow(point, prev_frame, next_frame, search_radius=20, return_error=False, dynamic_bbox=False):
     """
     Use optical flow to predict where a point moved.
     
@@ -17,6 +17,7 @@ def predict_point_with_optical_flow(point, prev_frame, next_frame, search_radius
         next_frame: numpy array (H, W, 3) or PIL Image or torch.Tensor - RGB next frame
         search_radius: int - search radius around prediction (pixels)
         return_error: bool - whether to return optical flow error
+        dynamic_bbox: bool - if True, adjust bbox size based on distance moved
     
     Returns:
         If return_error=False:
@@ -72,6 +73,9 @@ def predict_point_with_optical_flow(point, prev_frame, next_frame, search_radius
     prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_RGB2GRAY)
     next_gray = cv2.cvtColor(next_frame, cv2.COLOR_RGB2GRAY)
     
+    if point is None:
+        return None, None, False, 999.0
+
     # Prepare points for Lucas-Kanade (needs specific format)
     points = np.array([[[point[0], point[1]]]], dtype=np.float32)
     
@@ -90,11 +94,22 @@ def predict_point_with_optical_flow(point, prev_frame, next_frame, search_radius
         pred_x, pred_y = predicted[0][0]
         err_val = error[0][0]
         
+        # Adjust search radius based on distance if dynamic_bbox is enabled
+        if dynamic_bbox:
+            # Calculate distance between previous point and predicted point
+            distance = np.sqrt((pred_x - point[0])**2 + (pred_y - point[1])**2)
+            # Scale search radius: larger motion = larger search area
+            # Use a factor (e.g., 0.5) to add proportional buffer around the predicted point
+            dynamic_radius = max(search_radius, int(distance * 5))
+            actual_radius = dynamic_radius
+        else:
+            actual_radius = search_radius
+        
         # Define search region
-        x_min = max(0, int(pred_x - search_radius))
-        y_min = max(0, int(pred_y - search_radius))
-        x_max = min(next_frame.shape[1], int(pred_x + search_radius))
-        y_max = min(next_frame.shape[0], int(pred_y + search_radius))
+        x_min = max(0, int(pred_x - actual_radius))
+        y_min = max(0, int(pred_y - actual_radius))
+        x_max = min(next_frame.shape[1], int(pred_x + actual_radius))
+        y_max = min(next_frame.shape[0], int(pred_y + actual_radius))
         
         if return_error:
             return (pred_x, pred_y), (x_min, y_min, x_max, y_max), True, err_val

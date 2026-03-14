@@ -20,7 +20,8 @@ def eval_single_video(args):
                                                     video_idx=video_idx,
                                                     benchmark_data=benchmark_data,
                                                     pred_video_sizes=[854, 476],
-                                                    optical_flow_opt=args.optical_flow_opt)
+                                                    optical_flow_opt=args.optical_flow_opt,
+                                                    dynamic_bbox=args.dynamic_bbox)
     elif args.dataset_type == "BADJA":
         metrics = compute_badja_metrics_for_video(model_trajectories_dir=trajectories_dir, 
                                                   video_idx=video_idx,
@@ -45,6 +46,7 @@ if __name__ == "__main__":
     parser.add_argument("--benchmark-pickle-path", default="/home/dor.danino/dino-tracker/tapvid/tapvid_davis_data_strided.pkl", type=str)
     parser.add_argument("--out-file", default="dataset/tapvid-davis/davis_480/0/dinov2_sift_opt_comp_metrics.csv", type=str)
     parser.add_argument("--dataset-type", default="tapvid", type=str, help="Dataset type: tapvid or BADJA")
-    parser.add_argument("--optical-flow-opt", action="store_true", help="Whether optical flow optimization was used")
+    parser.add_argument("--optical_flow_opt", action="store_true", help="Whether optical flow optimization was used")
+    parser.add_argument("--dynamic_bbox", action="store_true", help="Whether dynamic bbox was used")
     args = parser.parse_args()
     eval_single_video(args)
