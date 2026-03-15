@@ -153,6 +153,7 @@ def compute_tapvid_metrics_for_video(
         benchmark_data: dict,
         video_idx: int,
         pred_video_sizes=None,
+        optical_flow_opt=False,
     ):
     """Compute model metrics for TAP-Vid dataset. for a single video.
     Args:
@@ -176,8 +177,11 @@ def compute_tapvid_metrics_for_video(
     pred_tracks_list = []
     
     for frame_idx in benchmark_video_data['query_points']:
-        pred_tracks_path = os.path.join(model_trajectories_dir, f"trajectories_{frame_idx}.npy")
-        pred_occluded_path =  os.path.join(model_occ_pred_dir, f"occlusion_preds_{frame_idx}.npy")
+        if frame_idx > 0:
+          continue
+        of_flag = 1 if optical_flow_opt else 0
+        pred_tracks_path = os.path.join(model_trajectories_dir, f"trajectories_{frame_idx}_of{of_flag}.npy")
+        pred_occluded_path =  os.path.join(model_occ_pred_dir, f"occlusion_preds_{frame_idx}_of{of_flag}.npy")
 
         assert os.path.exists(pred_tracks_path), f"failed to load {pred_tracks_path}"
         assert os.path.exists(pred_occluded_path), f"failed to load {pred_occluded_path}"

@@ -136,6 +136,25 @@ DINOv3 offers more model variants and includes ConvNeXt architectures:
 - **Point tracking**: Deep layers (e.g., layer 38 for vitg14) - semantic invariance
 - **Segmentation/masks**: Middle layers (e.g., layer 23) - spatial precision
 
+### Recommended Layers for DINOv2 ViT-S/14 (`dinov2_vits14`):
+
+Since ViT-S/14 has **12 layers total (0-11)**, here are the recommended layers:
+
+1. **Point Tracking / Feature Matching** (Recommended):
+   - **Layer 11** (last layer) - Most semantic, best for tracking invariance
+   - **Layer 10** - Alternative if layer 11 is too abstract
+   - **Layers 9-11** - Can average multiple deep layers for robustness
+
+2. **Segmentation / Dense Prediction**:
+   - **Layers 8-10** - Balance between semantic and spatial information
+   - **Layer 9** - Good middle-ground option
+
+3. **General Feature Extraction**:
+   - **Layer 11** - Default choice, highest semantic level
+   - **Layers 10-11** - Average for more robust features
+
+**Note**: Your current config uses `dino_layer: 11`, which is the recommended last layer for point tracking tasks. This provides maximum semantic invariance, which is crucial for tracking points across frames.
+
 ---
 
 ## "Plus" Variants in DINOv3
