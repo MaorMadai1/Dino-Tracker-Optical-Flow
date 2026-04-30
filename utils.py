@@ -7,18 +7,54 @@ from models.extractor import VitExtractor
 import os
 
 
+# Legacy paths used when callers don't pass the preprocessing YAML
+# (i.e. call `add_config_paths(data_path, {})`). They match the folder layout
+# that existed before the per-layer scheme was introduced, so existing data
+# on disk stays accessible to scripts like dino_tracker.py / visualize_rainbow.py.
+LEGACY_DINO_EMBED_DIR = "dinov3_small_embeddings_l11"
+LEGACY_MASK_DINO_EMBED_FILENAME = "dino_embed_video-layer=23.pt"
+
+
+def get_dino_embed_dir(dino_layer):
+    """Return the per-layer folder name used to store DINO features (e.g. 'l3')."""
+    return f"l{dino_layer}"
+
+
 def add_config_paths(data_path, config):
+    """Populate `config` with all derived paths for `data_path`.
+
+    If `config` contains `dino_layer` (i.e. it was loaded from
+    `config/preprocessing.yaml`), the DINO-embed path is derived from it so
+    each layer's features live in their own folder (e.g. `<data>/l3/...`).
+    Otherwise, a legacy folder name is used so callers that pass an empty
+    config don't crash.
+    """
     # preprocessing
     config['video_folder'] = os.path.join(data_path, "video")
     config['trajectories_file'] = os.path.join(data_path, "of_trajectories", "trajectories.pt")
     config['unfiltered_trajectories_file'] = os.path.join(data_path, "of_trajectories", "trajectories_wo_direct_filter.pt")
     config['fg_trajectories_file'] = os.path.join(data_path, "of_trajectories", "fg_trajectories.pt")
     config['bg_trajectories_file'] = os.path.join(data_path, "of_trajectories", "bg_trajectories.pt")
-    #config['dino_embed_video_path'] = os.path.join(data_path, "dino_embeddings", "dino_embed_video.pt")
-    #config['dino_embed_video_path'] = os.path.join(data_path, "dino_giant_embeddings_l38", "dino_embed_video.pt")
-    config['dino_embed_video_path'] = os.path.join(data_path, "dinov3_small_embeddings_l11", "dino_embed_video.pt")
+
+    if 'dino_layer' in config:
+        config['dino_embed_video_path'] = os.path.join(
+            data_path, get_dino_embed_dir(config['dino_layer']), "dino_embed_video.pt"
+        )
+    else:
+        config['dino_embed_video_path'] = os.path.join(
+            data_path, LEGACY_DINO_EMBED_DIR, "dino_embed_video.pt"
+        )
+
+    if 'mask_dino_layer' in config:
+        config['mask_dino_embed_video_path'] = os.path.join(
+            data_path, f"{get_dino_embed_dir(config['mask_dino_layer'])}_mask", "dino_embed_video.pt"
+        )
+    else:
+        config['mask_dino_embed_video_path'] = os.path.join(
+            data_path, "dino_embeddings", LEGACY_MASK_DINO_EMBED_FILENAME
+        )
+
     config['dino_bb_dir'] = os.path.join(data_path, "dino_best_buddies")
-    config['mask_dino_embed_video_path'] = os.path.join(data_path, "dino_embeddings", "dino_embed_video-layer=23.pt")
     config['masks_path'] = os.path.join(data_path, "masks")
     # model
     config['ckpt_folder'] = os.path.join(data_path, "models", "dino_tracker")
@@ -51,6 +87,7 @@ def get_dino_features_video(video, model_name="dinov2_vitb14", facet='tokens', s
     dino_embedding_dim = dino_extractor.get_embedding_dim(model_name)
     n_layers = dino_extractor.get_n_layers()
     layers = [n_layers - 1] if layer is None else [layer]
+    print(f"Layers: {layers}")
 
     dino_features_video = torch.zeros(size=(video.shape[0], dino_embedding_dim, ph, pw), device='cpu')
     for i in range(video.shape[0]):

@@ -18,6 +18,7 @@ from tracking_utils import overlay_heatmap_jpg, unravel_index, write_frame_numbe
 device = "cuda" if torch.cuda.is_available() else "cpu"
 from data.data_utils import save_video_frames, frames_to_video, frames_to_video2, get_grid_query_points 
 from data.tapvid import get_query_points_from_benchmark_config
+from utils import get_dino_embed_dir
 from tqdm import tqdm
 import numpy as np
 import torch.nn.functional as F
@@ -662,6 +663,8 @@ def benchmark_grid_points(args):
 if __name__ == "__main__":
     # Set all parameters using argparse
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, default="./config/preprocessing.yaml",
+                        help="Preprocessing config (used to derive the DINO layer that selects the embed folder)")
     parser.add_argument("--stride", type=int, default=7)
     parser.add_argument("--dino_model", type=str, default="dinov2_vits14")
     parser.add_argument("--start_frame_idx", type=int, default=0)
@@ -676,6 +679,14 @@ if __name__ == "__main__":
     parser.add_argument("--video_id", type=int, default=0) # -1 for all videos, 0 for the first video, 1 for the second video, etc.
     parser.add_argument("--dynamic_bbox", action="store_true", help="Use dynamic bbox")
     args = parser.parse_args()
+
+    # Read dino_layer from the YAML so we load features from the same folder
+    # save_dino_embed_video.py wrote to.
+    with open(args.config, "r") as _f:
+        _preproc_cfg = yaml.safe_load(_f.read())
+    dino_layer = _preproc_cfg["dino_layer"]
+    embed_dir = get_dino_embed_dir(dino_layer)
+    print(f"[visualize_raw_heatmaps] dino_layer={dino_layer}, embed_dir={embed_dir}")
 
     # Iterate over all folders in the dataset root
     for folder_name in sorted(os.listdir(args.dataset_root)):
@@ -692,20 +703,22 @@ if __name__ == "__main__":
 
         print(f"Processing folder: {folder_path} , with video_id: {video_id}")
 
-        # Set folder-specific paths dynamically
+        # Set folder-specific paths dynamically. The DINO-features path is derived from the
+        # same (model, layer) combo that save_dino_embed_video.py uses, so changing dino_layer
+        # in config/preprocessing.yaml is honored end-to-end.
         args.FRAMES_PATH = os.path.join(folder_path, "video")
         args.seg_mask_path = os.path.join(folder_path, "masks/00000.png")
-        # this is NOT a correct name - @maor.madai - fix it later
-        args.dino_embed_video_path = os.path.join(folder_path, "dino_giant_embeddings_l38/dino_embed_video.pt") # for dinov2 
+        args.dino_embed_video_path = os.path.join(folder_path, embed_dir, "dino_embed_video.pt")
         args.output_path = os.path.join(output_video_folder, "dinov2")
         args.trajectory_output_path = os.path.join(output_video_folder, "dinov2_grid_trajectory")
         args.occlusion_output_path = os.path.join(output_video_folder, "dinov2_grid_occlusion")
         args.time_taken_output_path = os.path.join(output_video_folder, "dinov2_grid_time_taken")
-        # args.dino_embed_video_path = os.path.join(folder_path, "dinov3_small_embeddings_l11/dino_embed_video.pt") # for dinov3
-        # args.output_path = os.path.join(output_video_folder, "dinov3")
-        # args.trajectory_output_path = os.path.join(output_video_folder, "dinov3_grid_trajectory")
-        # args.occlusion_output_path = os.path.join(output_video_folder, "dinov3_grid_occlusion")
-        # args.video_id = int(video_id)
+        print(f"  Loading DINO features from: {args.dino_embed_video_path}")
+        if not os.path.exists(args.dino_embed_video_path):
+            raise FileNotFoundError(
+                f"DINO features not found at {args.dino_embed_video_path}. "
+                f"Run preprocessing/save_dino_embed_video.py with dino_layer={dino_layer} first."
+            )
 
         # Create output directories if they don’t exist
         os.makedirs(args.output_path, exist_ok=True)
