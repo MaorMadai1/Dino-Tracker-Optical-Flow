@@ -699,7 +699,9 @@ if __name__ == "__main__":
         if args.video_id != -1 and int(video_id) != args.video_id:
             continue
 
-        output_video_folder = os.path.join(args.output_root, video_id)  # Ensure consistent output structure
+        # Nest per-video outputs under an l{dino_layer} subfolder so different layers
+        # don't overwrite each other (mirrors the input layout under dataset/.../<id>/l{layer}).
+        output_video_folder = os.path.join(args.output_root, video_id, embed_dir)
 
         print(f"Processing folder: {folder_path} , with video_id: {video_id}")
 

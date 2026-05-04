@@ -4,11 +4,21 @@ import pandas as pd
 import numpy as np
 import os
 import pickle
+import yaml
 from eval.metrics import compute_tapvid_metrics_for_video, compute_badja_metrics_for_video
+from utils import get_dino_embed_dir
 
 
 def eval_dataset(args):
     benchmark_data = pickle.load(open(args.benchmark_pickle_path, "rb"))
+
+    # Resolve the per-layer subfolder used by the benchmark step (visualize_raw_heatmaps.py),
+    # so eval reads from output_folder/davis_480/<id>/l{dino_layer}/...
+    with open(args.config, "r") as _f:
+        _preproc_cfg = yaml.safe_load(_f.read())
+    dino_layer = _preproc_cfg["dino_layer"]
+    embed_dir = get_dino_embed_dir(dino_layer)
+    print(f"[eval_benchmark] dino_layer={dino_layer}, reading from subfolder='{embed_dir}'")
 
     metrics_list = []
 
@@ -26,7 +36,7 @@ def eval_dataset(args):
     for video_idx_str in tqdm(os.listdir(dataset_root), desc="Evaluating dataset"):
         if video_idx_str.startswith("."):
             continue
-        video_dir = os.path.join(dataset_root, video_idx_str)
+        video_dir = os.path.join(dataset_root, video_idx_str, embed_dir)
         trajectories_dir = os.path.join(video_dir, "dinov2_grid_trajectory")
         occlusions_dir = os.path.join(video_dir, "dinov2_grid_occlusion")
         time_taken_dir = os.path.join(video_dir, "dinov2_grid_time_taken")
@@ -78,5 +88,7 @@ if __name__ == "__main__":
     parser.add_argument("--out-file", default="output_folder/dinov2_metrics.csv", type=str)
     parser.add_argument("--dataset-type", default="tapvid", type=str, help="Dataset type: tapvid or BADJA")
     parser.add_argument("--optical-flow-opt", action="store_true", help="Whether optical flow optimization was used")
+    parser.add_argument("--config", default="./config/preprocessing.yaml", type=str,
+                        help="Preprocessing config (used to derive the DINO layer that selects the per-video subfolder)")
     args = parser.parse_args()
     eval_dataset(args)

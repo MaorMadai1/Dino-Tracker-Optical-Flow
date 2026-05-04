@@ -17,7 +17,7 @@ direct_flow_threshold: 2.5
 
 #small model - maor used
 dino_model_name: dinov2_vits14 #dinov2_vits14 dinov3_vits16
-dino_layer: 3
+dino_layer: 11
 
 dino_facet: tokens
 dino_stride: 7

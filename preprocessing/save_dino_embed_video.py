@@ -64,6 +64,7 @@ def save_dino_embed_video(args, folder_path):
     print(f"Will save features to: {dino_embed_video_path}")
 
     video = load_video(video_folder=video_folder, resize=(h, w), num_frames=400).to(device)  # T x 3 x H x W
+    print(f"Loaded video from {video_folder}, shape: {video.shape}")
     dino_embed_video = get_dino_features_video(video=video, model_name=dino_model_name, facet=dino_facet, stride=dino_stride, layer=dino_layer).to(device).detach()  # T x C' x H' x W'
 
     os.makedirs(os.path.dirname(dino_embed_video_path), exist_ok=True)
